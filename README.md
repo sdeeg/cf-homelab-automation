@@ -1,391 +1,227 @@
-# vCenter Host Shutdown Scripts
+# VMware Cloud Foundation Homelab Automation
 
-This repository contains two scripts for gracefully shutting down VMware vCenter clusters:
+This repository contains PowerShell automation scripts for managing VMware vCenter clusters in a lab environment. The scripts focus on graceful shutdown/startup operations and cluster status monitoring for ESXi 8.0 and vCenter Server systems using VCF PowerCLI.
 
-1. **Python Script** (`vcenter_host_shutdown.py`) - Uses the vSphere API via pyvmomi
-2. **PowerShell Script** (`Shutdown-vCenterCluster.ps1`) - Uses VMware PowerCLI
+## Scripts Overview
 
-Both scripts are designed for small computer labs running ESXi 8.0 and vCenter.
+### Core Operations
+- **`Shutdown-vCenterCluster.ps1`** - Gracefully shutdown all VMs and ESXi hosts in a cluster
+- **`Startup-Tanzu.ps1`** - Start up ESXi hosts and VMs in proper sequence
+- **`Cluster-State.ps1`** - Display current status of cluster hosts and VMs
 
-## Script Comparison
+### Utility Scripts
+- **`Setup-PowerCLI.ps1`** - Install and configure VCF PowerCLI module
+- **`Load-Env.ps1`** - Environment configuration loader and vCenter connection manager
 
-| Feature | Python Script | PowerShell Script |
-|---------|---------------|-------------------|
-| **VM Shutdown** | Puts hosts in maintenance mode (VMs migrate/shutdown automatically) | **Explicitly shuts down all VMs first** |
-| **Priority VM** | Not supported | **Shuts down pivotal-ops-manager first** |
-| **Maintenance Mode** | Enters before host shutdown | Enters after VM shutdown |
-| **Dependencies** | pyvmomi library | VMware PowerCLI |
-| **Platform** | Cross-platform (Windows/Linux/Mac) | Windows PowerShell |
-| **Output** | Basic text output | **Colored console output** |
-
-**Recommendation**: Use the **PowerShell script** if you need explicit VM shutdown control and are running on Windows. Use the Python script for cross-platform compatibility.
-
-## Python Script Features
-
-- Connects to vCenter Server using the vSphere API
-- Automatically puts hosts into maintenance mode before shutdown
-- Gracefully shuts down all hosts in a specified cluster
-- Provides detailed logging and progress updates
-- Includes safety confirmation prompt
-- Handles SSL certificate verification for self-signed certificates
-
-## PowerShell Script Features
-
-- **Explicit VM shutdown sequence** (starting with pivotal-ops-manager)
-- **Colored console output** for better readability
-- **Three-phase shutdown process**:
-  1. Shutdown all VMs (priority VM first)
-  2. Put hosts in maintenance mode
-  3. Shutdown ESXi hosts
-- Comprehensive error handling and timeout management
-- Force shutdown fallback for unresponsive VMs
-- Detailed progress reporting for each phase
+### Configuration
+- **`config/tanzu-env.json`** - Template for environment configuration
 
 ## Prerequisites
 
-### For Python Script:
-- Python 3.6 or higher
-- Network access to your vCenter Server
-- Valid vCenter credentials
-
-### For PowerShell Script:
 - Windows PowerShell 5.1 or higher
-- VMware PowerCLI module
-- Network access to your vCenter Server
-- Valid vCenter credentials
+- VCF PowerCLI module (VMware Cloud Foundation PowerCLI)
+- VMware PowerCLI Core module
+- Network access to vCenter Server
+- Valid vCenter credentials with appropriate privileges
 
-### Required vCenter Privileges (Both Scripts):
-- Host.Config.Maintenance
-- Host.Config.Power
-- Resource.AssignVMToPool (for VM migration)
-- System.Read (for cluster access)
-- VirtualMachine.Interact.PowerOff (for VM shutdown - PowerShell script)
+### Required vCenter Privileges
+The service account needs these minimum privileges:
+- `Host.Config.Maintenance` - For maintenance mode operations
+- `Host.Config.Power` - For host shutdown/startup
+- `Resource.AssignVMToPool` - For VM migration during maintenance
+- `System.Read` - For cluster access
+- `VirtualMachine.Interact.PowerOff` - For VM shutdown operations
 
-## Installation
+## Initial Setup
 
-### Python Script Setup:
-1. Clone or download these scripts to your local machine
-2. Install the required Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   Or run the setup batch file:
-   ```cmd
-   .\setup.bat
-   ```
+### 1. Install VCF PowerCLI
+Run the setup script as Administrator to install and configure VCF PowerCLI:
+```powershell
+.\Setup-PowerCLI.ps1
+```
 
-### PowerShell Script Setup:
-1. **Run as Administrator** and execute the PowerCLI setup script:
-   ```powershell
-   .\Setup-PowerCLI.ps1
-   ```
-   This will install VMware PowerCLI and configure it for lab use.
+If you encounter execution policy errors, run:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
 
-2. If you encounter execution policy errors, run:
-   ```powershell
-   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-   ```
+### 2. Configure Environment
+1. Set the `$env:TANZU_SECRETS` environment variable to point to your `tanzu-env.json` configuration file
+2. Default location: `$HOME\.sekrits\tanzu-env.json`
+3. Use the template in `config\tanzu-env.json` as a starting point
 
 ## Configuration
 
-### Python Script Configuration:
-Update the configuration variables at the top of `vcenter_host_shutdown.py`:
+All scripts use a centralized JSON configuration file (`tanzu-env.json`) containing:
 
-```python
-# Configuration - Update these values for your environment
-VCENTER_HOST = "your-vcenter-server.domain.com"      # Your vCenter server FQDN or IP
-VCENTER_USER = "administrator@vsphere.local"         # Your vCenter username
-VCENTER_PASSWORD = "your-password"                   # Your vCenter password
-CLUSTER_NAME = "your-cluster-name"                   # Name of the cluster to shutdown
-VCENTER_PORT = 443                                   # vCenter port (usually 443)
+```json
+{
+  "vcenter": {
+    "server": "vcenter.mydomain",
+    "username": "administrator@mydomain",
+    "password": "password",
+    "cluster_name": "vcenter-cluster"
+  },
+  "ops_manager": {
+    "url": "https://opsmanager.mydomain",
+    "username": "tanzu",
+    "password": "Tanzu1!"
+  },
+  "vm_configuration": {
+    "vms_to_start": [
+      "pivotal-ops-manager",
+      "tanzu-admin"
+    ],
+    "cf_vm_director_tag": "p-bosh",
+    "bosh_vm_director_tag": "bosh-init"
+  },
+  "timeouts": {
+    "vm_startup_timeout": 300,
+    "vm_shutdown_timeout": 300,
+    "host_maintenance_timeout": 600,
+    "vcenter_connection_timeout": 60
+  }
+}
 ```
 
-### PowerShell Script Configuration:
-Update the configuration variables at the top of `Shutdown-vCenterCluster.ps1`:
-
-```powershell
-# Configuration - Update these values for your environment
-$vCenterServer = "your-vcenter-server.domain.com"
-$Username = "administrator@vsphere.local"
-$Password = "your-password"
-$ClusterName = "your-cluster-name"
-
-# VM shutdown configuration
-$PriorityVM = "pivotal-ops-manager"  # VM to shutdown first
-$VMShutdownTimeout = 300             # Timeout in seconds for VM shutdown
-$HostMaintenanceTimeout = 600        # Timeout in seconds for maintenance mode
-```
-
-### Example Configuration:
-```powershell
-$vCenterServer = "vcenter.lab.local"
-$Username = "administrator@vsphere.local"
-$Password = "VMware123!"
-$ClusterName = "Lab-Cluster"
-$PriorityVM = "pivotal-ops-manager"
-```
+### Configuration Details
+- **vCenter connection details**: server, username, password, cluster name
+- **VM configuration**: startup order, priority VMs, target VMs list
+- **Timeouts**: VM startup/shutdown, host maintenance, vCenter connection
+- **Operations Manager settings**: URL, credentials
 
 ## Usage
 
-### Python Script:
-1. Update the configuration variables in `vcenter_host_shutdown.py`
-2. Run the script:
-   ```bash
-   python vcenter_host_shutdown.py
-   ```
-3. Review the cluster and host information displayed
-4. Type `yes` when prompted to confirm the shutdown operation
+### Shutdown Cluster
+```powershell
+.\Shutdown-vCenterCluster.ps1
+```
+Gracefully shuts down all VMs and ESXi hosts in the cluster using a three-phase process.
 
-### PowerShell Script:
-1. Update the configuration variables in `Shutdown-vCenterCluster.ps1`
-2. Run the script:
-   ```powershell
-   .\Shutdown-vCenterCluster.ps1
-   ```
-3. Review the cluster, host, and VM information displayed
-4. Type `yes` when prompted to confirm the shutdown operation
+### Startup Cluster  
+```powershell
+.\Startup-Tanzu.ps1
+```
+Starts up ESXi hosts and VMs in the proper sequence.
 
-## What the Scripts Do
+### Check Cluster Status
+```powershell
+.\Cluster-State.ps1
+```
+Displays current connection status and state of all hosts and VMs in the cluster.
 
-### Python Script Process:
-1. **Connects to vCenter**: Establishes a secure connection to your vCenter Server
-2. **Finds the Cluster**: Locates the specified cluster by name
-3. **Lists Hosts**: Displays all hosts in the cluster and their current power state
-4. **Confirmation**: Asks for user confirmation before proceeding
-5. **For Each Host**:
-   - Checks if already in maintenance mode
-   - Enters maintenance mode (evacuates VMs if needed)
-   - Initiates graceful shutdown
-   - Waits for completion and reports status
+All scripts will:
+1. Load configuration from `tanzu-env.json`
+2. Connect to vCenter Server
+3. Display current cluster status
+4. Ask for confirmation before making changes
 
-### PowerShell Script Process:
-1. **Connects to vCenter**: Establishes a secure connection using PowerCLI
-2. **Finds the Cluster**: Locates the specified cluster and displays summary
-3. **Lists Resources**: Shows hosts, VMs, and their current states
-4. **Confirmation**: Asks for user confirmation before proceeding
-5. **Phase 1 - VM Shutdown**:
-   - Shuts down priority VM (pivotal-ops-manager) first
-   - Shuts down all remaining VMs gracefully
-   - Force stops any VMs that don't respond to graceful shutdown
-6. **Phase 2 - Maintenance Mode**:
-   - Puts all hosts into maintenance mode
-   - Waits for completion with timeout handling
-7. **Phase 3 - Host Shutdown**:
-   - Gracefully shuts down all ESXi hosts
-   - Reports completion status
+## Architecture
+
+### Configuration Management
+- `Load-Env.ps1` handles environment loading and vCenter connection establishment
+- Configuration is loaded from JSON and made available as PowerShell variables
+- Connection pooling ensures single vCenter session across script operations
+
+### VM Shutdown Process (3-Phase)
+1. **VM Shutdown**: Graceful shutdown starting with priority VM (typically ops-manager)
+2. **Maintenance Mode**: Put all hosts into maintenance mode with VSAN data migration
+3. **Host Shutdown**: Gracefully shutdown ESXi hosts
+
+### VM Startup Process
+1. **Exit Maintenance Mode**: Take hosts out of maintenance mode
+2. **VM Startup**: Start VMs in configured order with boot delays
+3. **Health Validation**: Verify final state of cluster and VMs
+
+### Error Handling
+- Comprehensive timeout management for all operations
+- Graceful fallback to force operations when timeouts occur
+- Colored console output for operation status visibility
+- Connection cleanup on script exit
 
 ## Safety Features
 
-### Both Scripts:
-- **Confirmation Prompt**: Requires explicit user confirmation before shutdown
-- **Graceful Shutdown**: Uses proper vSphere API calls for clean shutdown
-- **Error Handling**: Comprehensive error handling and reporting
-- **Status Checking**: Skips resources that are already in desired state
-
-### Python Script Specific:
-- **Maintenance Mode**: Automatically enters maintenance mode to safely migrate VMs
-
-### PowerShell Script Specific:
-- **VM Priority Shutdown**: Ensures critical VMs (pivotal-ops-manager) shutdown first
-- **Timeout Management**: Configurable timeouts with fallback to force operations
-- **Force Shutdown Fallback**: Automatically force-stops unresponsive VMs
-- **Three-Phase Process**: Separates VM shutdown, maintenance mode, and host shutdown
-- **Colored Output**: Easy-to-read status updates with color coding
+- **Confirmation prompts** before destructive operations
+- **Graceful operations** using proper vSphere API calls
+- **Status validation** before proceeding with operations
+- **vCLS VM exclusion** (vSphere Cluster Services VMs are automatically managed)
+- **Priority VM handling** for critical infrastructure components
+- **Timeout management** with configurable timeouts and fallback operations
+- **Colored console output** for clear operation status visibility
 
 ## Important Notes
 
-### Both Scripts:
 - **These scripts will shutdown ALL hosts in the specified cluster**
-- SSL certificate verification is disabled for self-signed certificates
+- SSL certificate verification is disabled for self-signed certificates  
 - Make sure you have console/iLO access to hosts in case of issues
 - Test in a non-production environment first
-
-### Python Script Specific:
-- Virtual machines will be migrated or shutdown as part of the maintenance mode process
-- The script uses graceful shutdown (not forced) - hosts with issues may not shutdown
-
-### PowerShell Script Specific:
 - **ALL VMs will be explicitly shutdown before host maintenance**
-- The pivotal-ops-manager VM will be shutdown first
+- The priority VM (typically ops-manager) will be shutdown first
 - VMs that don't respond to graceful shutdown will be force-stopped
 - Hosts enter maintenance mode after all VMs are shutdown
 
 ## Troubleshooting
 
-### Common Issues:
+### Common Issues
 
-#### Python Script:
-1. **Connection Failed**: Check network connectivity and vCenter credentials
-2. **Cluster Not Found**: Verify the cluster name is correct and case-sensitive
-3. **Permission Denied**: Ensure the user account has sufficient privileges
-4. **Maintenance Mode Failed**: Check for VMs that cannot be migrated
-5. **Module Import Error**: Run `pip install -r requirements.txt`
-
-#### PowerShell Script:
 1. **PowerCLI Not Found**: Run `.\Setup-PowerCLI.ps1` as Administrator
 2. **Execution Policy Error**: Run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
-3. **VM Shutdown Timeout**: Increase `$VMShutdownTimeout` value in script
-4. **Maintenance Mode Timeout**: Increase `$HostMaintenanceTimeout` value in script
-5. **Connection Failed**: Check network connectivity and vCenter credentials
+3. **Connection Failed**: Check network connectivity and vCenter credentials
+4. **Cluster Not Found**: Verify the cluster name is correct and case-sensitive
+5. **Permission Denied**: Ensure the user account has sufficient privileges
+6. **VM Shutdown Timeout**: Increase timeout values in `tanzu-env.json`
+7. **Maintenance Mode Timeout**: Increase `host_maintenance_timeout` in configuration
+8. **Configuration Not Found**: Ensure `$env:TANZU_SECRETS` points to valid `tanzu-env.json`
 
-### Required vCenter Privileges:
+## Common Development Tasks
 
-The user account needs the following privileges:
-- Host.Config.Maintenance
-Connecting to vCenter: vcenter.lab.local
-Successfully connected to vCenter
-Looking for cluster: Lab-Cluster
-Found cluster: Lab-Cluster
-Found 3 hosts in cluster:
-  - esxi01.lab.local (Status: poweredOn)
-  - esxi02.lab.local (Status: poweredOn)
-  - esxi03.lab.local (Status: poweredOn)
+### Running Scripts
+- Always run from the repository root directory
+- Scripts automatically source `Load-Env.ps1` for configuration
+- Use colored output functions (`Write-ColorOutput`) for consistent messaging
 
-WARNING: This will gracefully shutdown all hosts in the cluster!
-This action will:
-1. Put each host in maintenance mode
-2. Migrate or shutdown VMs as needed
-3. Shutdown each host
+### Adding New Operations
+- Follow the three-phase pattern for cluster operations
+- Use configuration variables from `Load-Env.ps1`
+- Implement timeout handling with user-configurable values
+- Include proper error handling and cleanup
 
-Do you want to continue? (yes/no): yes
-
-Starting graceful shutdown of 3 hosts...
-
-[1/3] Processing host: esxi01.lab.local
-Initiating graceful shutdown of host: esxi01.lab.local
-  Entering maintenance mode for esxi01.lab.local...
-  esxi01.lab.local is now in maintenance mode
-  Shutting down esxi01.lab.local...
-  esxi01.lab.local shutdown initiated successfully
-
-[2/3] Processing host: esxi02.lab.local
-...
-
-Shutdown process completed!
-Successfully processed: 3/3 hosts
-All hosts have been gracefully shutdown.
-
-Script completed successfully!
-```
-- Host.Config.Power
-- Resource.AssignVMToPool (for VM migration)
-- System.Read (for cluster access)
-- VirtualMachine.Interact.PowerOff (for PowerShell script VM shutdown)
+### Debugging
+- Scripts include detailed stack trace output on errors
+- Connection status is validated before operations
+- VM and host status is displayed before and after operations
 
 ## Example Output
 
-### Python Script Output:
-```
-vCenter Host Shutdown Script
-Connecting to vCenter: vcenter.lab.local
-Successfully connected to vCenter
-Looking for cluster: Lab-Cluster
-Found cluster: Lab-Cluster
-Found 3 hosts in cluster:
-  - esxi01.lab.local (Status: poweredOn)
-  - esxi02.lab.local (Status: poweredOn)
-  - esxi03.lab.local (Status: poweredOn)
-
-WARNING: This will gracefully shutdown all hosts in the cluster!
-Do you want to continue? (yes/no): yes
-
-Starting graceful shutdown of 3 hosts...
-[1/3] Processing host: esxi01.lab.local
-  Entering maintenance mode for esxi01.lab.local...
-  esxi01.lab.local is now in maintenance mode
-  Shutting down esxi01.lab.local...
-
-Script completed successfully!
-```
-
-### PowerShell Script Output:
+### Shutdown Script Output:
 ```
 vCenter Cluster Shutdown Script (PowerCLI)
-Loading PowerCLI modules...
-Connecting to vCenter: vcenter.lab.local
+Loading configuration from: C:\Users\user\.sekrits\tanzu-env.json
+Connecting to vCenter: vcenter.mydomain
 Successfully connected to vCenter
-Looking for cluster: Lab-Cluster
-Found cluster: Lab-Cluster
 
+Found cluster: vcenter-cluster
 Cluster Information:
   Hosts: 3
-  Total VMs: 12
-  Powered-on VMs: 8
-
-Hosts in cluster:
-  - esxi01.lab.local (Status: Connected)
-  - esxi02.lab.local (Status: Connected)
-  - esxi03.lab.local (Status: Connected)
+  Total VMs: 8
+  Powered-on VMs: 6
 
 WARNING: This will perform the following actions:
 1. Shutdown ALL VMs in the cluster (starting with pivotal-ops-manager)
-2. Put all hosts into maintenance mode
+2. Put all hosts into maintenance mode  
 3. Shutdown all ESXi hosts
 
 Do you want to continue? (yes/no): yes
 
 === VM Shutdown Phase ===
-Found 8 powered-on VMs in cluster Lab-Cluster
-
 Shutting down priority VM: pivotal-ops-manager
-  Shutdown command sent to pivotal-ops-manager
-  pivotal-ops-manager shutdown successfully
-
-Shutting down remaining 7 VMs...
-  Shutting down: web-server-01
-  Shutting down: database-01
-  ...
-All VMs in cluster have been shutdown successfully!
+All VMs shutdown successfully!
 
 === Maintenance Mode Phase ===
-Putting 3 hosts into maintenance mode...
-  Entering maintenance mode: esxi01.lab.local
-    esxi01.lab.local is now in maintenance mode
-  ...
+All hosts entered maintenance mode successfully!
 
 === Host Shutdown Phase ===
-Shutting down 3 hosts...
-  Shutting down host: esxi01.lab.local
-    Shutdown command sent to esxi01.lab.local
-  ...
-
-=== Shutdown Sequence Complete ===
-All shutdown commands have been sent.
-Script completed successfully!
-```
-========================================
-Connecting to vCenter: vcenter.lab.local
-Successfully connected to vCenter
-Looking for cluster: Lab-Cluster
-Found cluster: Lab-Cluster
-Found 3 hosts in cluster:
-  - esxi01.lab.local (Status: poweredOn)
-  - esxi02.lab.local (Status: poweredOn)
-  - esxi03.lab.local (Status: poweredOn)
-
-WARNING: This will gracefully shutdown all hosts in the cluster!
-This action will:
-1. Put each host in maintenance mode
-2. Migrate or shutdown VMs as needed
-3. Shutdown each host
-
-Do you want to continue? (yes/no): yes
-
-Starting graceful shutdown of 3 hosts...
-
-[1/3] Processing host: esxi01.lab.local
-Initiating graceful shutdown of host: esxi01.lab.local
-  Entering maintenance mode for esxi01.lab.local...
-  esxi01.lab.local is now in maintenance mode
-  Shutting down esxi01.lab.local...
-  esxi01.lab.local shutdown initiated successfully
-
-[2/3] Processing host: esxi02.lab.local
-...
-
-Shutdown process completed!
-Successfully processed: 3/3 hosts
-All hosts have been gracefully shutdown.
+All hosts shutdown successfully!
 
 Script completed successfully!
 ```
