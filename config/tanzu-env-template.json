@@ -1,0 +1,27 @@
+{
+  "vcenter": {
+    "server": "vcenter.mydomain",
+    "username": "administrator@mydomain",
+    "password": "password",
+    "cluster_name": "vcenter-cluster"
+  },
+  "ops_manager": {
+    "url": "https://opsmanager.mydomain",
+    "username": "tanzu",
+    "password": "Tanzu1!"
+  },
+  "vm_configuration": {
+    "vms_to_start": [
+      "pivotal-ops-manager",
+      "tanzu-admin"
+    ],
+    "cf_vm_director_tag": "p-bosh",
+    "bosh_vm_director_tag": "bosh-init"
+  },
+  "timeouts": {
+    "vm_startup_timeout": 300,
+    "vm_shutdown_timeout": 300,
+    "host_maintenance_timeout": 600,
+    "vcenter_connection_timeout": 60
+  }
+}
